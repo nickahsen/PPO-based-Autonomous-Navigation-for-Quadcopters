@@ -1,2 +1,6 @@
 TrainEnv:
   binvox: map/venice.binvox
+
+  use_rgb: true
+  use_segmentation: true
+  use_depth: true

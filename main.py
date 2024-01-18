@@ -17,6 +17,14 @@ from stable_baselines3.common.callbacks import EvalCallback
 
 from scripts.airsim_env import TrainConfig, ActionType
 
+try:
+    import wandb  # pylint: disable=import-outside-toplevel
+    from wandb.integration.sb3 import (  # pylint: disable=import-outside-toplevel
+        WandbCallback,
+    )
+except ImportError:
+    wandb, WandbCallback = None, None
+
 app = typer.Typer()
 
 current_file_path = Path(__file__).parent
@@ -35,16 +43,7 @@ def evaluate(
         env_config = yaml.safe_load(f)
         config = TrainConfig(**env_config["TrainEnv"])
 
-    # Create a DummyVecEnv
-    env = DummyVecEnv(
-        [
-            lambda: Monitor(
-                gymnasium.make(
-                    "scripts:airsim-env-v0", ip_address=sim_ip, env_config=config
-                )
-            )
-        ]
-    )
+    env = make_env(sim_ip, config)
 
     # Wrap env as VecTransposeImage (Channel last to channel first)
     env = VecTransposeImage(env)
@@ -77,6 +76,22 @@ def evaluate(
     print(f"number of timeout = {num_timeout}")
 
 
+def make_env(sim_ip: str, config: TrainConfig):
+    return DummyVecEnv(
+        [
+            lambda: Monitor(
+                gymnasium.make(
+                    "scripts:airsim-env-v0",
+                    ip_address=sim_ip,
+                    env_config=config,
+                    action_type=ActionType.CONTINUOUS_VELOCITY,
+                    sim_dt=1.0,
+                )
+            )
+        ]
+    )
+
+
 @app.command()
 def train(
     config_file: Annotated[Path, typer.Option()] = Path(
@@ -92,13 +107,7 @@ def train(
         env_config = yaml.safe_load(f)
         config = TrainConfig(**env_config["TrainEnv"])
 
-    env = gymnasium.make(
-        "scripts:airsim-env-v0",
-        ip_address=sim_ip,
-        env_config=config,
-        action_type=ActionType.CONTINUOUS_VELOCITY,
-        sim_dt=1.0,
-    )
+    env = make_env(sim_ip, config)
 
     # Initialize PPO
     model = PPO(
@@ -121,10 +130,8 @@ def train(
     callbacks = [eval_callback]
 
     if use_wandb:
-        import wandb  # pylint: disable=import-outside-toplevel
-        from wandb.integration.sb3 import (  # pylint: disable=import-outside-toplevel
-            WandbCallback,
-        )
+        if wandb is None:
+            print("W&B is not installed, please install it.")
 
         wandb.init(project="drone_nav", sync_tensorboard=True)  # type: ignore
         callbacks.append(WandbCallback(verbose=2))

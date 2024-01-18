@@ -1,4 +1,4 @@
-from typing import Any, Tuple, Dict
+from typing import Any, Tuple, Dict, Literal
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -12,10 +12,18 @@ from scipy.spatial.transform import Rotation as R
 from . import airsim
 from .util import create_voxel_grid
 
+RGBKEY = Literal["image_obs"]
+SEGMENTATIONKEY = Literal["segmentation_obs"]
+DEPTHKEY = Literal["depth_obs"]
+GOALKEY = Literal["goal_obs"]
+
 
 @dataclass
 class TrainConfig:
     binvox: Path
+    use_rgb: bool
+    use_segmentation: bool
+    use_depth: bool
 
     def __post_init__(self):
         self.binvox = Path(self.binvox)
@@ -37,6 +45,10 @@ class AirSimDroneEnv(gym.Env):
         self.drone = airsim.MultirotorClient(ip=ip_address)
         rgb_shape = self.get_rgb_image().shape
 
+        self.use_rgb = env_config.use_rgb
+        self.use_segmentation = env_config.use_segmentation
+        self.use_depth = env_config.use_depth
+
         self.drone.simPause(True)
 
         voxel_path = env_config.binvox
@@ -48,12 +60,24 @@ class AirSimDroneEnv(gym.Env):
         self.voxel.data[:, :, :26] = True
 
         observation_space = OrderedDict()
-        observation_space["goal_obs"] = gym.spaces.Box(
+        observation_space[GOALKEY] = gym.spaces.Box(
             low=-np.inf, high=np.inf, shape=(3,), dtype=np.float32
         )
-        observation_space["image_obs"] = gym.spaces.Box(
-            low=0, high=255, shape=rgb_shape, dtype=np.uint8
-        )
+        if self.use_rgb:
+            observation_space[RGBKEY] = gym.spaces.Box(
+                low=0, high=255, shape=rgb_shape, dtype=np.uint8
+            )
+        if self.use_segmentation:
+            # TODO: check max
+            observation_space[SEGMENTATIONKEY] = gym.spaces.Box(
+                low=0, high=255, shape=rgb_shape, dtype=np.uint8
+            )
+        if self.use_depth:
+            # TODO: check max
+            observation_space[DEPTHKEY] = gym.spaces.Box(
+                low=0, high=255, shape=rgb_shape, dtype=np.uint8
+            )
+
         self.observation_space = gym.spaces.Dict(observation_space)
 
         self.action_type = action_type
@@ -188,9 +212,15 @@ class AirSimDroneEnv(gym.Env):
         info = {"collision": self.is_collision()}
 
         obs = OrderedDict()
-        obs["image_obs"] = self.get_rgb_image()
+        if self.use_rgb:
+            obs[RGBKEY] = self.get_rgb_image()
+        if self.use_segmentation:
+            obs[SEGMENTATIONKEY] = self.get_segment_image()
+        if self.use_depth:
+            obs[DEPTHKEY] = self.get_depth_image()
+
         goal_obs = self.global_to_local(self.target_pos)
-        obs["goal_obs"] = goal_obs
+        obs[GOALKEY] = goal_obs
 
         return obs, info
 
@@ -309,9 +339,12 @@ class AirSimDroneEnv(gym.Env):
             0, airsim.ImageType.Segmentation, True, False
         )
         response = self.drone.simGetImages([segment_request])
-        img1d = np.fromstring(response.image_data_uint8, dtype=np.uint8)
-        img_rgb = img1d.reshape(response.height, response.width, 3)
-        img_rgb = np.flipud(img_rgb)
+        img1d = np.fromstring(  # type: ignore
+            response[0].image_data_uint8, dtype=np.uint8
+        )
+        img_seg = img1d.reshape(response.height, response.width, 3)
+        img_seg = np.flipud(img_seg)
+        return img_seg
 
     def global_to_local(self, pos):
         """
