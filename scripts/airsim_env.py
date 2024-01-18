@@ -1,4 +1,4 @@
-from typing import Any, Tuple, Dict, Literal
+from typing import Any, Tuple, Dict
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -12,10 +12,10 @@ from scipy.spatial.transform import Rotation as R
 from . import airsim
 from .util import create_voxel_grid
 
-RGBKEY = Literal["image_obs"]
-SEGMENTATIONKEY = Literal["segmentation_obs"]
-DEPTHKEY = Literal["depth_obs"]
-GOALKEY = Literal["goal_obs"]
+RGBKEY = "image_obs"
+SEGMENTATIONKEY = "segmentation_obs"
+DEPTHKEY = "depth_obs"
+GOALKEY = "goal_obs"
 
 
 @dataclass
@@ -43,7 +43,6 @@ class AirSimDroneEnv(gym.Env):
         sim_dt: float,
     ):
         self.drone = airsim.MultirotorClient(ip=ip_address)
-        rgb_shape = self.get_rgb_image().shape
 
         self.use_rgb = env_config.use_rgb
         self.use_segmentation = env_config.use_segmentation
@@ -64,18 +63,22 @@ class AirSimDroneEnv(gym.Env):
             low=-np.inf, high=np.inf, shape=(3,), dtype=np.float32
         )
         if self.use_rgb:
+            rgb_shape = self.get_rgb_image().shape
+
             observation_space[RGBKEY] = gym.spaces.Box(
                 low=0, high=255, shape=rgb_shape, dtype=np.uint8
             )
         if self.use_segmentation:
+            segmentation_shape = self.get_segment_image().shape
             # TODO: check max
             observation_space[SEGMENTATIONKEY] = gym.spaces.Box(
-                low=0, high=255, shape=rgb_shape, dtype=np.uint8
+                low=0, high=255, shape=segmentation_shape, dtype=np.uint8
             )
         if self.use_depth:
+            depth_shape = self.get_depth_image().shape
             # TODO: check max
             observation_space[DEPTHKEY] = gym.spaces.Box(
-                low=0, high=255, shape=rgb_shape, dtype=np.uint8
+                low=0, high=255, shape=depth_shape, dtype=np.uint8
             )
 
         self.observation_space = gym.spaces.Dict(observation_space)
@@ -314,25 +317,38 @@ class AirSimDroneEnv(gym.Env):
         return flag
 
     def get_rgb_image(self) -> np.ndarray:
-        rgb_image_request = airsim.ImageRequest(0, airsim.ImageType.Scene, False, False)
-        responses = self.drone.simGetImages([rgb_image_request])
-        img1d = np.fromstring(  # type: ignore
-            responses[0].image_data_uint8, dtype=np.uint8
-        )
-        img2d = np.reshape(img1d, (responses[0].height, responses[0].width, 3))
+        while True:
+            rgb_image_request = airsim.ImageRequest(
+                0, airsim.ImageType.Scene, False, False
+            )
+            responses = self.drone.simGetImages([rgb_image_request])
 
-        img_rgb = np.flipud(img2d)
-        return img_rgb.astype(np.uint8)
+            if responses[0].height == 0:
+                continue
+
+            img1d = np.fromstring(  # type: ignore
+                responses[0].image_data_uint8, dtype=np.uint8
+            )
+            img2d = np.reshape(img1d, (responses[0].height, responses[0].width, 3))
+
+            img_rgb = np.flipud(img2d)
+            return img_rgb.astype(np.uint8)
 
     def get_depth_image(self, thresh=2.0) -> np.ndarray:
-        depth_image_request = airsim.ImageRequest(
-            0, airsim.ImageType.DepthPerspective, True, False
-        )
-        responses = self.drone.simGetImages([depth_image_request])
-        depth_image = np.array(responses[0].image_data_float, dtype=np.float64)
-        depth_image = np.reshape(depth_image, (responses[0].height, responses[0].width))
-        depth_image[depth_image > thresh] = thresh
-        return depth_image
+        while True:
+            depth_image_request = airsim.ImageRequest(
+                0, airsim.ImageType.DepthPerspective, True, False
+            )
+            responses = self.drone.simGetImages([depth_image_request])
+            if responses[0].height == 0:
+                continue
+
+            depth_image = np.array(responses[0].image_data_float, dtype=np.float64)
+            depth_image = np.reshape(
+                depth_image, (responses[0].height, responses[0].width)
+            )
+            depth_image[depth_image > thresh] = thresh
+            return depth_image
 
     def get_segment_image(self) -> np.ndarray:
         segment_request = airsim.ImageRequest(
@@ -342,7 +358,7 @@ class AirSimDroneEnv(gym.Env):
         img1d = np.fromstring(  # type: ignore
             response[0].image_data_uint8, dtype=np.uint8
         )
-        img_seg = img1d.reshape(response.height, response.width, 3)
+        img_seg = img1d.reshape(response[0].height, response[0].width, 3)
         img_seg = np.flipud(img_seg)
         return img_seg
 

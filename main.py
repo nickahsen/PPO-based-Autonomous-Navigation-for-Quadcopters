@@ -1,5 +1,4 @@
 from pathlib import Path
-
 import time
 
 import yaml
@@ -9,6 +8,7 @@ import typer
 from typing_extensions import Annotated
 
 import gymnasium
+import torch
 
 from stable_baselines3 import PPO
 from stable_baselines3.common.monitor import Monitor
@@ -115,7 +115,7 @@ def train(
         env,
         verbose=1,
         seed=seed,
-        device="cuda",
+        device="cuda" if torch.cuda.is_available() else "cpu",
         tensorboard_log="./tb_logs/",
     )
 
