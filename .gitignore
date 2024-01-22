@@ -50,3 +50,6 @@ coverage.xml
 docs/_build/
 tb_logs/*
 .~lock.map.binvox#
+
+# Wandb
+wandb/
